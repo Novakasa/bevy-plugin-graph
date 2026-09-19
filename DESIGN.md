@@ -40,8 +40,11 @@ exposes the plugin tree. Instrumentation is not a shortcut; it is the only hones
   has no opinion on whether plugins and modules line up one to one, and there are
   good reasons to define several plugins in one module.
 - An **edge** is "added by". Edges are recorded by the instrumentation, never inferred.
-- One graph corresponds to one Bevy `World`.
-- A synthetic **`App` root** anchors the top-level plugins.
+- One graph corresponds to one Bevy `World`. An app and each of its sub-apps record
+  separately, because `SubApp::add_plugins` swaps the sub-app into a temporary `App`,
+  so the recording resource naturally lands in that sub-app's own world.
+- A synthetic **root** anchors the top-level plugins. Each world names its own, and
+  that name both labels the root node and selects the output file.
 
 Because every edge is a real add, the v1 graph is a tree — a genuine cycle would recurse inside
 Bevy and crash long before it reached the graph. The data model nonetheless stores parents as a
@@ -53,9 +56,13 @@ list, so multi-parent nodes can be introduced later without reworking consumers.
 app.add_owned(CombatPlugin);
 ```
 
-An extension method taking a single plugin. It pushes a node, delegates to `add_plugins`, and pops.
-`build()` runs synchronously in between, so nesting is captured without traits, macros, or `unsafe`.
-Plugins added with plain `add_plugins` are simply absent from the graph.
+An extension method taking a single plugin, implemented for both `App` and `SubApp`. It pushes a
+node, delegates to `add_plugins`, and pops. `build()` runs synchronously in between, so nesting is
+captured without traits, macros, or `unsafe`. Plugins added with plain `add_plugins` are simply
+absent from the graph.
+
+Nesting inside a sub-app needs no special handling: `Plugin::build` there receives a temporary `App`
+wrapping the sub-app, so the `App` implementation already writes into the right world.
 
 ## Output
 
@@ -73,19 +80,24 @@ distort the shape of the wiring tree, which is the thing the module identity is 
 to be compared against. Divergence between the two is a question, not an error — the
 renderer surfaces it and says nothing about it.
 
-Emission is a free function over a built `App`. A plugin wraps it to fire from `Plugin::finish()`,
-with the output path taken from an environment variable and an opt-in "dump and exit" so iterating
-on the graph does not require opening and closing a window each time.
+Emission is a method on the graph. A plugin wraps it to fire from `Plugin::finish()`, with the
+output path taken from an environment variable. Every world dumps itself: the root name is inserted
+into the configured path's file stem, so `graph.mmd` becomes `graph.Main.mmd` and
+`graph.RenderApp.mmd`, side by side and never overwriting each other.
+
+There is deliberately no "dump and exit" option. `App::finish()` finishes the main app's plugins
+*before* its sub-apps', so exiting from the main app would kill the process before any sub-app had
+a chance to write.
 
 ## Scope
 
 Bevy 0.19, tracking the latest Bevy release. Built as a personal tool first; publishing is a
 question for after it proves useful.
 
-**In v1:** the containment graph, JSON and Mermaid output.
+**In v1:** the containment graph for an app and each of its sub-apps, JSON and Mermaid output.
 
 **Not in v1:** shared/multi-parent plugins, any form of linting or violation reporting, foreign and
-un-instrumented plugins, sub-apps, DOT output, an in-app UI.
+un-instrumented plugins, DOT output, an in-app UI.
 
 ## Beyond v1
 

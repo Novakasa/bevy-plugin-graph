@@ -86,6 +86,19 @@ impl PluginGraph {
         &self.nodes
     }
 
+    /// The name of the synthetic root — the app or sub-app this graph belongs to.
+    pub fn root_name(&self) -> &str {
+        &self.nodes[ROOT.0].name
+    }
+
+    /// Name the synthetic root. Each app and sub-app names its own, because each
+    /// dumps to its own file.
+    pub fn set_root_name(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        self.nodes[ROOT.0].path = name.clone();
+        self.nodes[ROOT.0].name = name;
+    }
+
     pub fn node(&self, id: NodeId) -> Option<&PluginNode> {
         self.nodes.get(id.0)
     }
@@ -106,7 +119,7 @@ impl PluginGraph {
 
     /// Record `P` as added by whatever is currently building, and make it the
     /// current parent. Paired with [`PluginGraph::end`].
-    pub(crate) fn begin<P: 'static>(&mut self) -> NodeId {
+    pub(crate) fn begin_owned<P: 'static>(&mut self) -> NodeId {
         let parent = *self.stack.last().unwrap_or(&ROOT);
         let type_id = TypeId::of::<P>();
 
@@ -142,7 +155,7 @@ impl PluginGraph {
 
     /// Pop the plugin that just finished building. The root is never popped, so an
     /// unbalanced call cannot corrupt the graph.
-    pub(crate) fn end(&mut self) {
+    pub(crate) fn end_owned(&mut self) {
         if self.stack.len() > 1 {
             self.stack.pop();
         }

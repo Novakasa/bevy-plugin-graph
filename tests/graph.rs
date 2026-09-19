@@ -1,7 +1,7 @@
 //! Integration tests against a real `App` with a nested plugin structure.
 
-use bevy_app::{App, Plugin};
-use bevy_plugin_graph::{AddOwned, Format, PluginGraphPlugin, ROOT};
+use bevy_app::{App, AppLabel, Plugin, SubApp};
+use bevy_plugin_graph::{AddOwned, Format, PluginGraph, PluginGraphPlugin, ROOT};
 
 struct GamePlugin;
 
@@ -40,16 +40,30 @@ impl Plugin for UnrecordedPlugin {
     fn build(&self, _app: &mut App) {}
 }
 
+mod deeper {
+    use super::*;
+
+    pub struct NestedPlugin;
+
+    impl Plugin for NestedPlugin {
+        fn build(&self, _app: &mut App) {}
+    }
+}
+
 fn built_app() -> App {
     let mut app = App::new();
     app.add_owned(GamePlugin);
     app
 }
 
+fn graph_of(app: &App) -> &PluginGraph {
+    bevy_plugin_graph::graph(app).expect("graph was recorded")
+}
+
 #[test]
 fn records_the_nesting() {
     let app = built_app();
-    let graph = bevy_plugin_graph::graph(&app).expect("graph was recorded");
+    let graph = graph_of(&app);
 
     let game = graph.find::<GamePlugin>().expect("GamePlugin recorded");
     let combat = graph.find::<CombatPlugin>().expect("CombatPlugin recorded");
@@ -65,7 +79,7 @@ fn records_the_nesting() {
 #[test]
 fn unrecorded_plugins_are_absent() {
     let app = built_app();
-    let graph = bevy_plugin_graph::graph(&app).unwrap();
+    let graph = graph_of(&app);
 
     assert!(graph.find::<UnrecordedPlugin>().is_none());
     // root + Game + Combat + Damage + Ui
@@ -73,20 +87,35 @@ fn unrecorded_plugins_are_absent() {
 }
 
 #[test]
-fn nodes_carry_short_names_and_crates() {
-    let app = built_app();
-    let graph = bevy_plugin_graph::graph(&app).unwrap();
-    let combat = graph.find::<CombatPlugin>().unwrap();
+fn an_app_with_no_recording_has_no_graph() {
+    let app = App::new();
+    assert!(bevy_plugin_graph::graph(&app).is_none());
+}
 
+#[test]
+fn nodes_carry_short_names_crates_and_modules() {
+    let mut app = App::new();
+    app.add_owned(GamePlugin);
+    app.add_owned(deeper::NestedPlugin);
+    let graph = graph_of(&app);
+
+    let combat = graph.find::<CombatPlugin>().unwrap();
     assert_eq!(combat.name, "CombatPlugin");
     assert!(combat.path.ends_with("CombatPlugin"));
     assert_eq!(combat.krate.as_deref(), Some("graph"));
+    assert_eq!(combat.module.as_deref(), Some("graph"));
+
+    let nested = graph.find::<deeper::NestedPlugin>().unwrap();
+    assert_eq!(nested.module.as_deref(), Some("graph::deeper"));
+
+    // The synthetic root is not defined anywhere.
+    assert_eq!(graph.nodes()[ROOT.0].module, None);
 }
 
 #[test]
 fn every_node_but_the_root_has_a_parent() {
     let app = built_app();
-    let graph = bevy_plugin_graph::graph(&app).unwrap();
+    let graph = graph_of(&app);
 
     assert_eq!(graph.edges().count(), graph.nodes().len() - 1);
     for node in graph.nodes().iter().skip(1) {
@@ -97,13 +126,12 @@ fn every_node_but_the_root_has_a_parent() {
 #[test]
 fn mermaid_renders_every_node_and_edge() {
     let app = built_app();
-    let mermaid = bevy_plugin_graph::to_mermaid(&app);
+    let graph = graph_of(&app);
+    let mermaid = graph.to_mermaid();
 
     assert!(mermaid.starts_with("flowchart TD\n"));
-    assert!(mermaid.contains(r#"n0["App"]"#));
     assert!(mermaid.contains(r#"["CombatPlugin"]"#));
 
-    let graph = bevy_plugin_graph::graph(&app).unwrap();
     let arrows = mermaid.lines().filter(|line| line.contains("-->")).count();
     assert_eq!(arrows, graph.edges().count());
 }
@@ -111,13 +139,12 @@ fn mermaid_renders_every_node_and_edge() {
 #[test]
 fn json_is_parseable_and_complete() {
     let app = built_app();
-    let json: serde_json::Value = serde_json::from_str(&bevy_plugin_graph::to_json(&app)).unwrap();
+    let graph = graph_of(&app);
+    let json: serde_json::Value = serde_json::from_str(&graph.to_json()).unwrap();
 
     assert_eq!(json["root"], 0);
-    assert_eq!(json["nodes"][0]["name"], "App");
-    assert_eq!(json["nodes"][0]["crate"], serde_json::Value::Null);
-
-    let graph = bevy_plugin_graph::graph(&app).unwrap();
+    assert_eq!(json["nodes"][0]["module"], serde_json::Value::Null);
+    assert_eq!(json["nodes"][1]["module"], "graph");
     assert_eq!(json["nodes"].as_array().unwrap().len(), graph.nodes().len());
     assert_eq!(
         json["edges"].as_array().unwrap().len(),
@@ -126,78 +153,10 @@ fn json_is_parseable_and_complete() {
 }
 
 #[test]
-fn an_app_with_no_recording_still_has_a_root() {
-    let app = App::new();
-    let mermaid = bevy_plugin_graph::to_mermaid(&app);
-
-    assert!(bevy_plugin_graph::graph(&app).is_none());
-    assert_eq!(mermaid, "flowchart TD\n    n0[\"App\"]\n");
-}
-
-#[test]
-fn the_plugin_writes_the_file_it_is_told_to() {
-    let path = std::env::temp_dir().join("bevy_plugin_graph_test.json");
-    let _ = std::fs::remove_file(&path);
-
-    let mut app = App::new();
-    app.add_plugins(PluginGraphPlugin::to(&path).format(Format::Json));
-    app.add_owned(GamePlugin);
-    app.finish();
-
-    let written = std::fs::read_to_string(&path).expect("graph was written");
-    let json: serde_json::Value = serde_json::from_str(&written).unwrap();
-    assert!(json["nodes"].as_array().unwrap().len() >= 5);
-
-    let _ = std::fs::remove_file(&path);
-}
-
-mod deeper {
-    use super::*;
-
-    pub struct NestedPlugin;
-
-    impl Plugin for NestedPlugin {
-        fn build(&self, _app: &mut App) {}
-    }
-}
-
-#[test]
-fn nodes_carry_their_defining_module() {
-    let mut app = App::new();
-    app.add_owned(GamePlugin);
-    app.add_owned(deeper::NestedPlugin);
-
-    let graph = bevy_plugin_graph::graph(&app).unwrap();
-    assert_eq!(
-        graph.find::<CombatPlugin>().unwrap().module.as_deref(),
-        Some("graph")
-    );
-    assert_eq!(
-        graph
-            .find::<deeper::NestedPlugin>()
-            .unwrap()
-            .module
-            .as_deref(),
-        Some("graph::deeper")
-    );
-    // The synthetic root is not defined anywhere.
-    assert_eq!(graph.nodes()[0].module, None);
-}
-
-#[test]
-fn json_carries_the_module() {
-    let app = built_app();
-    let json: serde_json::Value = serde_json::from_str(&bevy_plugin_graph::to_json(&app)).unwrap();
-
-    assert_eq!(json["nodes"][0]["module"], serde_json::Value::Null);
-    assert_eq!(json["nodes"][1]["module"], "graph");
-}
-
-#[test]
 fn a_single_module_gets_no_legend_or_colours() {
     // Every plugin in `built_app` lives in the same module, so there is nothing to
     // contrast and the overlay stays out of the way.
-    let mermaid = bevy_plugin_graph::to_mermaid(&built_app());
+    let mermaid = graph_of(&built_app()).to_mermaid();
 
     assert!(!mermaid.contains("classDef"));
     assert!(!mermaid.contains("subgraph legend"));
@@ -208,8 +167,8 @@ fn two_modules_get_a_legend_and_one_class_each() {
     let mut app = App::new();
     app.add_owned(GamePlugin);
     app.add_owned(deeper::NestedPlugin);
-
-    let mermaid = bevy_plugin_graph::to_mermaid(&app);
+    let graph = graph_of(&app);
+    let mermaid = graph.to_mermaid();
 
     assert!(mermaid.contains("subgraph legend[\"modules\"]"));
     assert!(mermaid.contains(r#"l0["graph"]"#));
@@ -221,11 +180,116 @@ fn two_modules_get_a_legend_and_one_class_each() {
     assert_eq!(mermaid.matches("classDef").count(), 2);
 
     // Every non-root node is classed exactly once, plus its legend swatch.
-    let graph = bevy_plugin_graph::graph(&app).unwrap();
     let classed: usize = mermaid
         .lines()
         .filter(|line| line.trim_start().starts_with("class "))
         .map(|line| line.split(',').count())
         .sum();
     assert_eq!(classed, graph.nodes().len() - 1 + 2);
+}
+
+#[test]
+fn the_plugin_names_the_root() {
+    let mut app = App::new();
+    app.add_plugins(PluginGraphPlugin::new("MyGame"));
+    app.add_owned(GamePlugin);
+
+    let graph = graph_of(&app);
+    assert_eq!(graph.root_name(), "MyGame");
+    assert!(graph.to_mermaid().contains(r#"n0["MyGame"]"#));
+}
+
+#[test]
+fn naming_works_whichever_order_the_plugin_is_added() {
+    let mut app = App::new();
+    app.add_owned(GamePlugin);
+    app.add_plugins(PluginGraphPlugin::new("MyGame"));
+
+    assert_eq!(graph_of(&app).root_name(), "MyGame");
+}
+
+#[derive(AppLabel, Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct Render;
+
+struct RenderPlugin;
+
+impl Plugin for RenderPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_owned(DamagePlugin);
+    }
+}
+
+fn app_with_sub_app() -> App {
+    let mut app = App::new();
+    app.add_plugins(PluginGraphPlugin::new("Main"));
+    app.add_owned(GamePlugin);
+
+    let mut sub = SubApp::new();
+    sub.add_plugins(PluginGraphPlugin::new("Render"));
+    sub.add_owned(RenderPlugin);
+    app.insert_sub_app(Render, sub);
+    app
+}
+
+#[test]
+fn sub_apps_record_a_separate_graph() {
+    let app = app_with_sub_app();
+
+    let main = graph_of(&app);
+    let sub = bevy_plugin_graph::graph_in(app.sub_app(Render).world()).expect("sub-app graph");
+
+    assert_eq!(main.root_name(), "Main");
+    assert_eq!(sub.root_name(), "Render");
+
+    // The sub-app's plugins are in the sub-app's graph and nowhere else.
+    assert!(sub.find::<RenderPlugin>().is_some());
+    assert!(main.find::<RenderPlugin>().is_none());
+    assert!(main.find::<GamePlugin>().is_some());
+    assert!(sub.find::<GamePlugin>().is_none());
+
+    // Nesting inside the sub-app is recorded against the sub-app's root.
+    let render = sub.find::<RenderPlugin>().unwrap();
+    let damage = sub.find::<DamagePlugin>().unwrap();
+    assert_eq!(render.parents, vec![ROOT]);
+    assert_eq!(damage.parents, vec![render.id]);
+}
+
+#[test]
+fn each_root_writes_its_own_file() {
+    let dir = std::env::temp_dir().join("bevy_plugin_graph_roots");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = dir.join("graph.json");
+
+    let mut app = App::new();
+    app.add_plugins(
+        PluginGraphPlugin::new("Main")
+            .to(&base)
+            .format(Format::Json),
+    );
+    app.add_owned(GamePlugin);
+
+    let mut sub = SubApp::new();
+    sub.add_plugins(
+        PluginGraphPlugin::new("Render")
+            .to(&base)
+            .format(Format::Json),
+    );
+    sub.add_owned(RenderPlugin);
+    app.insert_sub_app(Render, sub);
+
+    app.finish();
+
+    let main: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("graph.Main.json")).unwrap())
+            .unwrap();
+    let render: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("graph.Render.json")).unwrap())
+            .unwrap();
+
+    assert_eq!(main["nodes"][0]["name"], "Main");
+    assert_eq!(render["nodes"][0]["name"], "Render");
+    assert_eq!(render["nodes"].as_array().unwrap().len(), 3);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -7,7 +7,8 @@ Records which Bevy plugin added which plugin, and renders the result as JSON or 
 
 ## Usage
 
-Swap `add_plugins` for `add_owned` at the call sites you want in the graph:
+Name the root, then swap `add_plugins` for `add_owned` at the call sites you want in
+the graph:
 
 ```rust
 use bevy::prelude::*;
@@ -16,7 +17,7 @@ use bevy_plugin_graph::{AddOwned, PluginGraphPlugin};
 fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins);
-    app.add_plugins(PluginGraphPlugin::new());
+    app.add_plugins(PluginGraphPlugin::new("Main"));
     app.add_owned(GamePlugin);
     app.run();
 }
@@ -38,10 +39,33 @@ BEVY_PLUGIN_GRAPH=graph.mmd cargo run     # Mermaid, from the extension
 BEVY_PLUGIN_GRAPH=graph.json cargo run    # JSON
 ```
 
-`PluginGraphPlugin::new().exit_after_dump()` quits before the runner starts, so
-iterating on the graph of a windowed app doesn't mean closing a window each time.
-To skip the plugin entirely, `bevy_plugin_graph::dump(&app, path, format)` works on
-any built `App` — see `examples/game.rs`, which never calls `run()`.
+To dump without the plugin — and without ever calling `run()` — reach the graph
+directly. See `examples/game.rs`:
+
+```rust
+bevy_plugin_graph::graph(&app).unwrap().write("graph.mmd", Format::Mermaid)?;
+```
+
+## Sub-apps
+
+One graph corresponds to one Bevy `World`, so each sub-app records and dumps its own:
+
+```rust
+let mut render = SubApp::new();
+render.add_plugins(PluginGraphPlugin::new("RenderApp"));
+render.add_owned(RenderPlugin);
+app.insert_sub_app(RenderApp, render);
+```
+
+The root name is inserted into the output file's stem, so the roots land side by side
+and never overwrite each other:
+
+```
+BEVY_PLUGIN_GRAPH=graph.mmd  →  graph.Main.mmd
+                                graph.RenderApp.mmd
+```
+
+Reach a sub-app's graph with `bevy_plugin_graph::graph_in(app.sub_app(Label).world())`.
 
 ## Output
 
@@ -51,7 +75,7 @@ differs from its neighbours:
 
 ```mermaid
 flowchart TD
-    n0["App"]
+    n0["Main"]
     n1["GamePlugin"]
     n2["CorePlugin"]
     n3["SavePlugin"]
@@ -103,7 +127,6 @@ JSON is the real interface; Mermaid is one consumer of it.
 - **No data-flow analysis, no linting, no violation report.** Bevy keeps per-system
   data access private (`SystemWithAccess::access` is `pub(crate)` with no public
   getter), so "who actually *uses* this component" is not answerable from outside.
-- **Sub-apps are not traversed.** One graph corresponds to one Bevy `World`.
 
 ## Compatibility
 
