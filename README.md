@@ -126,4 +126,4 @@ analysis, and what is deliberately out of scope.
 
 ## License
 
-MIT or Apache-2.0, at your option.
+[MIT](LICENSE).
