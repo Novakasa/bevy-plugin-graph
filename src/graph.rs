@@ -26,6 +26,13 @@ pub struct PluginNode {
     pub name: String,
     /// The crate the plugin comes from, if the path has any qualifier at all.
     pub krate: Option<String>,
+    /// The module the plugin is *defined* in, if any.
+    ///
+    /// Descriptive only. This crate has no opinion on whether plugins and modules
+    /// should line up one to one — there are good reasons to define several plugins
+    /// in one module. It is recorded so that consumers can see where the wiring tree
+    /// and the module tree diverge, and judge for themselves.
+    pub module: Option<String>,
     /// Plugins that added this one.
     ///
     /// A list rather than a single parent: v1 only ever records one, but shared
@@ -63,6 +70,7 @@ impl PluginGraph {
             path: "App".to_string(),
             name: "App".to_string(),
             krate: None,
+            module: None,
             parents: Vec::new(),
             added: 1,
         };
@@ -118,6 +126,7 @@ impl PluginGraph {
                     id,
                     name: short_name(&path),
                     krate: crate_name(&path),
+                    module: module_path(&path),
                     path,
                     parents: vec![parent],
                     added: 1,
@@ -163,6 +172,13 @@ fn last_segment(segment: &str) -> &str {
     segment.rsplit("::").next().unwrap_or(segment)
 }
 
+/// The module a type is defined in, or `None` for an unqualified name.
+fn module_path(path: &str) -> Option<String> {
+    let head = path.split(['<', '>', ' ', '&', '(', ',']).next()?;
+    let (module, _) = head.rsplit_once("::")?;
+    Some(module.to_string())
+}
+
 /// The crate a type path starts with, or `None` if it has no qualifier.
 fn crate_name(path: &str) -> Option<String> {
     let head = path.split(['<', '>', ' ', '&', '(', ',']).next()?;
@@ -192,6 +208,15 @@ mod tests {
         );
         assert_eq!(crate_name("a::B<c::D>").as_deref(), Some("a"));
         assert_eq!(crate_name("App"), None);
+    }
+
+    #[test]
+    fn extracts_module() {
+        assert_eq!(
+            module_path("my_game::combat::CombatPlugin").as_deref(),
+            Some("my_game::combat")
+        );
+        assert_eq!(module_path("App"), None);
     }
 
     #[test]

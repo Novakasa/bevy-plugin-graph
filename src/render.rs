@@ -2,7 +2,33 @@
 
 use crate::graph::PluginGraph;
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::Path;
+
+/// Categorical stroke colours, assigned to modules in fixed order.
+///
+/// Validated against both a light (`#fcfcfb`) and a dark (`#1a1a19`) surface: every
+/// slot clears the lightness band, chroma floor, colour-vision-deficiency separation
+/// (worst adjacent pair ΔE 8.4) and normal-vision separation (worst ΔE 19.3) in both.
+/// Slot 4 sits marginally under 3:1 contrast on the light surface, which is why the
+/// legend ships visible module labels rather than relying on colour alone.
+///
+/// Order is the safety mechanism, not decoration — do not shuffle or extend it.
+const PALETTE: [&str; 8] = [
+    "#3987e5", // blue
+    "#d95926", // orange
+    "#199e70", // aqua
+    "#c98500", // yellow
+    "#d55181", // magenta
+    "#008300", // green
+    "#9085e9", // violet
+    "#e66767", // red
+];
+
+/// Modules past the eighth fold into one neutral bucket rather than getting a
+/// generated hue, which would collide with the validated set.
+const OTHER: &str = "#8a8a85";
 
 /// Output format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -38,6 +64,7 @@ struct WireNode<'a> {
     name: &'a str,
     #[serde(rename = "crate")]
     krate: Option<&'a str>,
+    module: Option<&'a str>,
     added: u32,
 }
 
@@ -58,6 +85,7 @@ pub(crate) fn to_json(graph: &PluginGraph) -> String {
                 path: &node.path,
                 name: &node.name,
                 krate: node.krate.as_deref(),
+                module: node.module.as_deref(),
                 added: node.added,
             })
             .collect(),
@@ -77,17 +105,109 @@ pub(crate) fn to_mermaid(graph: &PluginGraph) -> String {
     let mut out = String::from("flowchart TD\n");
 
     for node in graph.nodes() {
-        out.push_str(&format!("    n{}[\"{}\"]\n", node.id.0, escape(&node.name)));
+        let _ = writeln!(out, "    n{}[\"{}\"]", node.id.0, escape(&node.name));
     }
 
     if graph.edges().next().is_some() {
         out.push('\n');
         for (from, to) in graph.edges() {
-            out.push_str(&format!("    n{} --> n{}\n", from.0, to.0));
+            let _ = writeln!(out, "    n{} --> n{}", from.0, to.0);
         }
     }
 
+    let modules = rank_modules(graph);
+    if modules.len() >= 2 {
+        write_module_colours(&mut out, graph, &modules);
+    }
+
     out
+}
+
+/// Modules in the order they take colour slots: biggest group first, ties broken by
+/// name so that the same app always renders the same colours.
+fn rank_modules(graph: &PluginGraph) -> Vec<&str> {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for node in graph.nodes() {
+        if let Some(module) = node.module.as_deref() {
+            *counts.entry(module).or_default() += 1;
+        }
+    }
+
+    let mut ranked: Vec<(&str, usize)> = counts.into_iter().collect();
+    ranked.sort_by(|(a_name, a_count), (b_name, b_count)| {
+        b_count.cmp(a_count).then(a_name.cmp(b_name))
+    });
+    ranked.into_iter().map(|(module, _)| module).collect()
+}
+
+/// Colour node *strokes* by module, and emit a legend naming each one.
+///
+/// Strokes rather than fills: a `classDef` is static, so it cannot carry a
+/// light/dark swap, and leaving fill and text to Mermaid keeps the diagram legible
+/// in whichever theme the reader is using.
+///
+/// Deliberately not subgraphs. Grouping would lay nodes out by module and so distort
+/// the shape of the wiring tree — which is the very thing the colour is meant to be
+/// compared against.
+fn write_module_colours(out: &mut String, graph: &PluginGraph, modules: &[&str]) {
+    let class_of = |slot: usize| {
+        if slot < PALETTE.len() {
+            format!("m{slot}")
+        } else {
+            "mOther".to_string()
+        }
+    };
+
+    // Legend first: identity is never carried by colour alone.
+    out.push_str("\n    subgraph legend[\"modules\"]\n        direction LR\n");
+    for (slot, module) in modules.iter().enumerate().take(PALETTE.len()) {
+        let _ = writeln!(out, "        l{slot}[\"{}\"]", escape(module));
+    }
+    if modules.len() > PALETTE.len() {
+        let _ = writeln!(
+            out,
+            "        lOther[\"other ({})\"]",
+            modules.len() - PALETTE.len()
+        );
+    }
+    // `direction LR` alone is ignored when a subgraph has no internal edges, so the
+    // swatches are chained with invisible links to lay the legend out as a row.
+    let swatches: Vec<String> = (0..modules.len().min(PALETTE.len()))
+        .map(|slot| format!("l{slot}"))
+        .chain((modules.len() > PALETTE.len()).then(|| "lOther".to_string()))
+        .collect();
+    if swatches.len() > 1 {
+        let _ = writeln!(out, "        {}", swatches.join(" ~~~ "));
+    }
+
+    // Mermaid fills subgraphs yellow by default, which reads as meaning something.
+    out.push_str("    end\n    style legend fill:none,stroke:#8a8a85,stroke-width:1px\n\n");
+
+    for (slot, colour) in PALETTE.iter().enumerate().take(modules.len()) {
+        let _ = writeln!(out, "    classDef m{slot} stroke:{colour},stroke-width:2px");
+    }
+    if modules.len() > PALETTE.len() {
+        let _ = writeln!(out, "    classDef mOther stroke:{OTHER},stroke-width:2px");
+    }
+
+    // One `class` line per module keeps the output diffable.
+    for (slot, module) in modules.iter().enumerate() {
+        let class = class_of(slot);
+        let mut members: Vec<String> = graph
+            .nodes()
+            .iter()
+            .filter(|node| node.module.as_deref() == Some(*module))
+            .map(|node| format!("n{}", node.id.0))
+            .collect();
+
+        if slot < PALETTE.len() {
+            members.push(format!("l{slot}"));
+        } else if slot == PALETTE.len() {
+            members.push("lOther".to_string());
+        }
+
+        let _ = writeln!(out, "    class {} {class}", members.join(","));
+    }
 }
 
 /// Mermaid reads `<` and `>` inside quoted labels as HTML, which mangles generic
@@ -113,5 +233,14 @@ mod tests {
     fn root_only_mermaid_has_no_edge_block() {
         let rendered = to_mermaid(&PluginGraph::new());
         assert_eq!(rendered, "flowchart TD\n    n0[\"App\"]\n");
+    }
+
+    #[test]
+    fn palette_slots_are_distinct() {
+        let mut seen = PALETTE.to_vec();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), PALETTE.len());
+        assert!(!PALETTE.contains(&OTHER));
     }
 }

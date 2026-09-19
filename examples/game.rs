@@ -3,8 +3,13 @@
 //! Run with `cargo run --example game`. It never calls `App::run()` — the graph is
 //! complete as soon as the plugins have finished building.
 //!
-//! Note that `MinimalPlugins` is added with plain `add_plugins` and so does not
-//! appear in the output. Only what you record is recorded.
+//! Two things worth noticing in the output:
+//!
+//! - `MinimalPlugins` is added with plain `add_plugins`, so it is absent. Only what
+//!   you record is recorded.
+//! - `WeaponPlugin` is deliberately defined in the `ui` module while being added by
+//!   `CombatPlugin`. In the rendered graph it is the one node whose stroke colour
+//!   differs from its neighbours — the shape a refactor candidate takes.
 
 use bevy::MinimalPlugins;
 use bevy::prelude::*;
@@ -29,46 +34,78 @@ struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_owned(CorePlugin);
-        app.add_owned(CombatPlugin);
-        app.add_owned(UiPlugin);
+        app.add_owned(core::CorePlugin);
+        app.add_owned(combat::CombatPlugin);
+        app.add_owned(ui::UiPlugin);
     }
 }
 
-struct CorePlugin;
+mod core {
+    use super::*;
 
-impl Plugin for CorePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_owned(SavePlugin);
+    pub struct CorePlugin;
+
+    impl Plugin for CorePlugin {
+        fn build(&self, app: &mut App) {
+            app.add_owned(SavePlugin);
+            app.add_owned(SettingsPlugin);
+        }
+    }
+
+    pub struct SavePlugin;
+
+    impl Plugin for SavePlugin {
+        fn build(&self, _app: &mut App) {}
+    }
+
+    pub struct SettingsPlugin;
+
+    impl Plugin for SettingsPlugin {
+        fn build(&self, _app: &mut App) {}
     }
 }
 
-struct CombatPlugin;
+mod combat {
+    use super::*;
 
-impl Plugin for CombatPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_owned(DamagePlugin);
-        app.add_owned(WeaponPlugin);
+    pub struct CombatPlugin;
+
+    impl Plugin for CombatPlugin {
+        fn build(&self, app: &mut App) {
+            app.add_owned(DamagePlugin);
+            // Lives in `ui`, but is wired in here. This is the divergence the colour
+            // overlay is for — a question to answer, not an error.
+            app.add_owned(super::ui::WeaponPlugin);
+        }
+    }
+
+    pub struct DamagePlugin;
+
+    impl Plugin for DamagePlugin {
+        fn build(&self, _app: &mut App) {}
     }
 }
 
-struct UiPlugin;
+mod ui {
+    use super::*;
 
-impl Plugin for UiPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_owned(HudPlugin);
+    pub struct UiPlugin;
+
+    impl Plugin for UiPlugin {
+        fn build(&self, app: &mut App) {
+            app.add_owned(HudPlugin);
+        }
+    }
+
+    pub struct HudPlugin;
+
+    impl Plugin for HudPlugin {
+        fn build(&self, _app: &mut App) {}
+    }
+
+    pub struct WeaponPlugin;
+
+    impl Plugin for WeaponPlugin {
+        fn build(&self, _app: &mut App) {}
     }
 }
-
-macro_rules! leaf_plugins {
-    ($($name:ident),* $(,)?) => {
-        $(
-            struct $name;
-            impl Plugin for $name {
-                fn build(&self, _app: &mut App) {}
-            }
-        )*
-    };
-}
-
-leaf_plugins!(SavePlugin, DamagePlugin, WeaponPlugin, HudPlugin);

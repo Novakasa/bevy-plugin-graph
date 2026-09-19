@@ -14,6 +14,12 @@ that interacts with it" hold as a discipline in a real Bevy app?* Bevy does not 
 `World` is one flat, globally-reachable namespace — so the graph shows intent, not enforcement.
 Seeing the intent drawn out is the point; judging it is left to the reader.
 
+The graph is not the architecture — it is *evidence about where the architecture
+boundaries should go*. Rust modules, not plugins, are what actually enforce an API
+boundary: modules govern who can name what at compile time, plugins govern what gets
+wired in at runtime. The two axes are orthogonal, and the tool exists to show where
+they diverge so a human can judge whether the divergence is deliberate.
+
 ## Why instrumentation, not inference
 
 Three ways to learn the plugin structure:
@@ -30,6 +36,9 @@ exposes the plugin tree. Instrumentation is not a shortcut; it is the only hones
 ## Model
 
 - A **node** is a plugin, identified by `TypeId`, appearing once per graph.
+- Each node also records the **module** it is defined in. Descriptive only: the crate
+  has no opinion on whether plugins and modules line up one to one, and there are
+  good reasons to define several plugins in one module.
 - An **edge** is "added by". Edges are recorded by the instrumentation, never inferred.
 - One graph corresponds to one Bevy `World`.
 - A synthetic **`App` root** anchors the top-level plugins.
@@ -52,6 +61,17 @@ Plugins added with plain `add_plugins` are simply absent from the graph.
 
 **JSON is the interface**; every other format is a consumer of it. v1 also ships a Mermaid renderer,
 because it displays in an editor and on GitHub with no toolchain installed.
+
+Mermaid nodes are stroked by module, with a legend naming each one. The palette is
+validated for colour-vision deficiency and for contrast against both a light and a
+dark surface; strokes rather than fills, because a `classDef` is static and cannot
+carry a theme swap. Modules past the eighth fold into one neutral bucket rather than
+getting a generated hue.
+
+Colour rather than nested subgraphs: grouping would lay nodes out by module and so
+distort the shape of the wiring tree, which is the thing the module identity is meant
+to be compared against. Divergence between the two is a question, not an error — the
+renderer surfaces it and says nothing about it.
 
 Emission is a free function over a built `App`. A plugin wraps it to fire from `Plugin::finish()`,
 with the output path taken from an environment variable and an opt-in "dump and exit" so iterating

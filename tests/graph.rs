@@ -150,3 +150,82 @@ fn the_plugin_writes_the_file_it_is_told_to() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+mod deeper {
+    use super::*;
+
+    pub struct NestedPlugin;
+
+    impl Plugin for NestedPlugin {
+        fn build(&self, _app: &mut App) {}
+    }
+}
+
+#[test]
+fn nodes_carry_their_defining_module() {
+    let mut app = App::new();
+    app.add_owned(GamePlugin);
+    app.add_owned(deeper::NestedPlugin);
+
+    let graph = bevy_plugin_graph::graph(&app).unwrap();
+    assert_eq!(
+        graph.find::<CombatPlugin>().unwrap().module.as_deref(),
+        Some("graph")
+    );
+    assert_eq!(
+        graph
+            .find::<deeper::NestedPlugin>()
+            .unwrap()
+            .module
+            .as_deref(),
+        Some("graph::deeper")
+    );
+    // The synthetic root is not defined anywhere.
+    assert_eq!(graph.nodes()[0].module, None);
+}
+
+#[test]
+fn json_carries_the_module() {
+    let app = built_app();
+    let json: serde_json::Value = serde_json::from_str(&bevy_plugin_graph::to_json(&app)).unwrap();
+
+    assert_eq!(json["nodes"][0]["module"], serde_json::Value::Null);
+    assert_eq!(json["nodes"][1]["module"], "graph");
+}
+
+#[test]
+fn a_single_module_gets_no_legend_or_colours() {
+    // Every plugin in `built_app` lives in the same module, so there is nothing to
+    // contrast and the overlay stays out of the way.
+    let mermaid = bevy_plugin_graph::to_mermaid(&built_app());
+
+    assert!(!mermaid.contains("classDef"));
+    assert!(!mermaid.contains("subgraph legend"));
+}
+
+#[test]
+fn two_modules_get_a_legend_and_one_class_each() {
+    let mut app = App::new();
+    app.add_owned(GamePlugin);
+    app.add_owned(deeper::NestedPlugin);
+
+    let mermaid = bevy_plugin_graph::to_mermaid(&app);
+
+    assert!(mermaid.contains("subgraph legend[\"modules\"]"));
+    assert!(mermaid.contains(r#"l0["graph"]"#));
+    assert!(mermaid.contains(r#"l1["graph::deeper"]"#));
+
+    // Biggest module takes the first slot, so its stroke is palette slot 1.
+    assert!(mermaid.contains("classDef m0 stroke:#3987e5,stroke-width:2px"));
+    assert!(mermaid.contains("classDef m1 stroke:#d95926,stroke-width:2px"));
+    assert_eq!(mermaid.matches("classDef").count(), 2);
+
+    // Every non-root node is classed exactly once, plus its legend swatch.
+    let graph = bevy_plugin_graph::graph(&app).unwrap();
+    let classed: usize = mermaid
+        .lines()
+        .filter(|line| line.trim_start().starts_with("class "))
+        .map(|line| line.split(',').count())
+        .sum();
+    assert_eq!(classed, graph.nodes().len() - 1 + 2);
+}
