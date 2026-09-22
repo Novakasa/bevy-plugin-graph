@@ -2,8 +2,8 @@
 
 Records which Bevy plugin added which plugin, and renders the result as JSON or Mermaid.
 
-**Added is the only thing we can unambiguously check.** An edge `A → B` means `A`'s
-`build()` added `B`. Nothing about actual data flow is inferred or claimed.
+The whole API is one extension trait on `App` and `SubApp`: `PluginGraphExt`, with
+`init_graph`, `add_owned`, `graph`, and `dump_graph`.
 
 ## Usage
 
@@ -34,14 +34,7 @@ impl Plugin for GamePlugin {
 }
 ```
 
-Recording is opt-in: `add_owned` only records into a graph `init_graph` created, so
-call `init_graph` first — on a world without one, `add_owned` is exactly
-`add_plugins`.
-
-`build()` runs synchronously inside each add, so the graph is complete as soon as the
-last add returns — no runner, no schedule, no `finish()` involved. That also means
-*when* to dump is your policy, not the crate's. Gate it however you like, including
-skipping `run()` entirely when all you want is the graph:
+Then dump the graph like so:
 
 ```rust
 if std::env::var_os("DUMP_GRAPH").is_some() {
@@ -66,17 +59,6 @@ let mut render = SubApp::new();
 render.init_graph("RenderApp");
 render.add_owned(RenderPlugin);
 app.insert_sub_app(RenderApp, render);
-```
-
-The whole API — `add_owned`, `init_graph`, `graph`, `dump_graph` — is one extension
-trait, `PluginGraphExt`, implemented for `App` and `SubApp` alike. Reach a sub-app's
-graph with `app.sub_app(RenderApp).graph()` (or, holding only a bare `World`, read
-the `PluginGraph` resource directly). Dumping every world against the same base path
-lands the roots side by side, never overwriting each other:
-
-```
-graph.mmd  →  graph.Main.mmd
-              graph.RenderApp.mmd
 ```
 
 ## Output
@@ -115,21 +97,6 @@ flowchart TD
     class n5,n6 m2
     class n1 m3
 ```
-
-That divergence is a question, not an error. Plugins and modules are orthogonal —
-modules govern who can name what at compile time, plugins govern what gets wired in
-at runtime — and there are good reasons to define several plugins in one module. The
-graph points at candidates; you decide.
-
-JSON is the real interface; Mermaid is one consumer of it.
-
-## What it does not do
-
-- **Plugins added with plain `add_plugins` are invisible.** Third-party plugins and
-  `DefaultPlugins` do not appear. Only what you record is recorded.
-- **No data-flow analysis, no linting, no violation report.** Bevy keeps per-system
-  data access private (`SystemWithAccess::access` is `pub(crate)` with no public
-  getter), so "who actually *uses* this component" is not answerable from outside.
 
 ## Compatibility
 
