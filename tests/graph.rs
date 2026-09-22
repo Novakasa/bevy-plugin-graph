@@ -1,7 +1,7 @@
 //! Integration tests against a real `App` with a nested plugin structure.
 
 use bevy_app::{App, AppLabel, Plugin, SubApp};
-use bevy_plugin_graph::{AddOwned, Format, PluginGraph, PluginGraphPlugin, ROOT};
+use bevy_plugin_graph::{PluginGraph, PluginGraphExt, ROOT};
 
 struct GamePlugin;
 
@@ -52,12 +52,13 @@ mod deeper {
 
 fn built_app() -> App {
     let mut app = App::new();
+    app.init_graph("App");
     app.add_owned(GamePlugin);
     app
 }
 
 fn graph_of(app: &App) -> &PluginGraph {
-    bevy_plugin_graph::graph(app).expect("graph was recorded")
+    app.graph().expect("graph was recorded")
 }
 
 #[test]
@@ -87,14 +88,18 @@ fn unrecorded_plugins_are_absent() {
 }
 
 #[test]
-fn an_app_with_no_recording_has_no_graph() {
-    let app = App::new();
-    assert!(bevy_plugin_graph::graph(&app).is_none());
+fn an_app_with_no_init_has_no_graph() {
+    // `add_owned` records only into a graph `init` created; without one it is
+    // plain `add_plugins`.
+    let mut app = App::new();
+    app.add_owned(GamePlugin);
+    assert!(app.graph().is_none());
 }
 
 #[test]
 fn nodes_carry_short_names_crates_and_modules() {
     let mut app = App::new();
+    app.init_graph("App");
     app.add_owned(GamePlugin);
     app.add_owned(deeper::NestedPlugin);
     let graph = graph_of(&app);
@@ -165,6 +170,7 @@ fn a_single_module_gets_no_colours_or_notes() {
 #[test]
 fn two_modules_get_module_notes_and_one_class_each() {
     let mut app = App::new();
+    app.init_graph("App");
     app.add_owned(GamePlugin);
     app.add_owned(deeper::NestedPlugin);
     let graph = graph_of(&app);
@@ -192,9 +198,9 @@ fn two_modules_get_module_notes_and_one_class_each() {
 }
 
 #[test]
-fn the_plugin_names_the_root() {
+fn init_names_the_root() {
     let mut app = App::new();
-    app.add_plugins(PluginGraphPlugin::new("MyGame"));
+    app.init_graph("MyGame");
     app.add_owned(GamePlugin);
 
     let graph = graph_of(&app);
@@ -203,12 +209,17 @@ fn the_plugin_names_the_root() {
 }
 
 #[test]
-fn naming_works_whichever_order_the_plugin_is_added() {
+fn adds_before_init_are_not_recorded() {
     let mut app = App::new();
     app.add_owned(GamePlugin);
-    app.add_plugins(PluginGraphPlugin::new("MyGame"));
+    app.init_graph("MyGame");
 
-    assert_eq!(graph_of(&app).root_name(), "MyGame");
+    let graph = graph_of(&app);
+    assert_eq!(graph.root_name(), "MyGame");
+    // The graph exists and is named, but starts empty: recording is opt-in and
+    // only covers adds after `init`.
+    assert_eq!(graph.nodes().len(), 1);
+    assert!(graph.find::<GamePlugin>().is_none());
 }
 
 #[derive(AppLabel, Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -224,11 +235,11 @@ impl Plugin for RenderPlugin {
 
 fn app_with_sub_app() -> App {
     let mut app = App::new();
-    app.add_plugins(PluginGraphPlugin::new("Main"));
+    app.init_graph("Main");
     app.add_owned(GamePlugin);
 
     let mut sub = SubApp::new();
-    sub.add_plugins(PluginGraphPlugin::new("Render"));
+    sub.init_graph("Render");
     sub.add_owned(RenderPlugin);
     app.insert_sub_app(Render, sub);
     app
@@ -239,7 +250,7 @@ fn sub_apps_record_a_separate_graph() {
     let app = app_with_sub_app();
 
     let main = graph_of(&app);
-    let sub = bevy_plugin_graph::graph_in(app.sub_app(Render).world()).expect("sub-app graph");
+    let sub = app.sub_app(Render).graph().expect("sub-app graph");
 
     assert_eq!(main.root_name(), "Main");
     assert_eq!(sub.root_name(), "Render");
@@ -258,30 +269,18 @@ fn sub_apps_record_a_separate_graph() {
 }
 
 #[test]
-fn each_root_writes_its_own_file() {
+fn dump_writes_each_root_to_its_own_file() {
     let dir = std::env::temp_dir().join("bevy_plugin_graph_roots");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let base = dir.join("graph.json");
 
-    let mut app = App::new();
-    app.add_plugins(
-        PluginGraphPlugin::new("Main")
-            .to(&base)
-            .format(Format::Json),
-    );
-    app.add_owned(GamePlugin);
+    let app = app_with_sub_app();
+    app.dump_graph(&base).unwrap();
+    app.sub_app(Render).dump_graph(&base).unwrap();
 
-    let mut sub = SubApp::new();
-    sub.add_plugins(
-        PluginGraphPlugin::new("Render")
-            .to(&base)
-            .format(Format::Json),
-    );
-    sub.add_owned(RenderPlugin);
-    app.insert_sub_app(Render, sub);
-
-    app.finish();
+    // A world without a graph refuses to dump instead of writing nothing.
+    assert!(App::new().dump_graph(&base).is_err());
 
     let main: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("graph.Main.json")).unwrap())

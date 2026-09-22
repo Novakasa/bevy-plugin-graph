@@ -46,8 +46,8 @@ pub struct PluginNode {
 
 /// The graph recorded so far, plus the stack of plugins currently being built.
 ///
-/// Lives in the main world as a resource. Inserted on demand, so the order in which
-/// [`PluginGraphPlugin`](crate::PluginGraphPlugin) is added does not matter.
+/// Lives in its world as a resource, inserted only by
+/// [`init_graph`](crate::PluginGraphExt::init_graph) — recording is opt-in.
 #[derive(Debug, Resource)]
 pub struct PluginGraph {
     nodes: Vec<PluginNode>,

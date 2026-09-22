@@ -7,18 +7,20 @@ Records which Bevy plugin added which plugin, and renders the result as JSON or 
 
 ## Usage
 
-Name the root, then swap `add_plugins` for `add_owned` at the call sites you want in
-the graph:
+Name the root, swap `add_plugins` for `add_owned` at the call sites you want in
+the graph, then dump before `run()`:
 
 ```rust
 use bevy::prelude::*;
-use bevy_plugin_graph::{AddOwned, PluginGraphPlugin};
+use bevy_plugin_graph::PluginGraphExt;
 
 fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins);
-    app.add_plugins(PluginGraphPlugin::new("Main"));
+    app.init_graph("Main");
     app.add_owned(GamePlugin);
+
+    app.dump_graph("graph.mmd").unwrap();
     app.run();
 }
 
@@ -32,40 +34,50 @@ impl Plugin for GamePlugin {
 }
 ```
 
-Then point it at a file:
+Recording is opt-in: `add_owned` only records into a graph `init_graph` created, so
+call `init_graph` first — on a world without one, `add_owned` is exactly
+`add_plugins`.
 
-```sh
-BEVY_PLUGIN_GRAPH=graph.mmd cargo run     # Mermaid, from the extension
-BEVY_PLUGIN_GRAPH=graph.json cargo run    # JSON
-```
-
-To dump without the plugin — and without ever calling `run()` — reach the graph
-directly. See `examples/game.rs`:
+`build()` runs synchronously inside each add, so the graph is complete as soon as the
+last add returns — no runner, no schedule, no `finish()` involved. That also means
+*when* to dump is your policy, not the crate's. Gate it however you like, including
+skipping `run()` entirely when all you want is the graph:
 
 ```rust
-bevy_plugin_graph::graph(&app).unwrap().write("graph.mmd", Format::Mermaid)?;
+if std::env::var_os("DUMP_GRAPH").is_some() {
+    app.dump_graph("graph.mmd").unwrap();
+    return;
+}
+app.run();
 ```
+
+`dump_graph` infers the format from the extension (`.mmd`/`.md` → Mermaid, anything
+else → JSON) and inserts the root name into the file stem: `graph.mmd` becomes
+`graph.Main.mmd`. For an exact path and explicit format, reach the graph itself:
+`app.graph().unwrap().write("out.json", Format::Json)`.
 
 ## Sub-apps
 
-One graph corresponds to one Bevy `World`, so each sub-app records and dumps its own:
+One graph corresponds to one Bevy `World`, so each sub-app records its own, named
+while you build it:
 
 ```rust
 let mut render = SubApp::new();
-render.add_plugins(PluginGraphPlugin::new("RenderApp"));
+render.init_graph("RenderApp");
 render.add_owned(RenderPlugin);
 app.insert_sub_app(RenderApp, render);
 ```
 
-The root name is inserted into the output file's stem, so the roots land side by side
-and never overwrite each other:
+The whole API — `add_owned`, `init_graph`, `graph`, `dump_graph` — is one extension
+trait, `PluginGraphExt`, implemented for `App` and `SubApp` alike. Reach a sub-app's
+graph with `app.sub_app(RenderApp).graph()` (or, holding only a bare `World`, read
+the `PluginGraph` resource directly). Dumping every world against the same base path
+lands the roots side by side, never overwriting each other:
 
 ```
-BEVY_PLUGIN_GRAPH=graph.mmd  →  graph.Main.mmd
-                                graph.RenderApp.mmd
+graph.mmd  →  graph.Main.mmd
+              graph.RenderApp.mmd
 ```
-
-Reach a sub-app's graph with `bevy_plugin_graph::graph_in(app.sub_app(Label).world())`.
 
 ## Output
 

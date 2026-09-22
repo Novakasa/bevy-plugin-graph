@@ -17,7 +17,7 @@
 use bevy::MinimalPlugins;
 use bevy::app::{AppLabel, SubApp};
 use bevy::prelude::*;
-use bevy_plugin_graph::{AddOwned, PluginGraphPlugin};
+use bevy_plugin_graph::PluginGraphExt;
 
 #[derive(AppLabel, Clone, Copy, Debug, Hash, PartialEq, Eq)]
 struct RenderApp;
@@ -25,25 +25,23 @@ struct RenderApp;
 fn main() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
-    // Writes to $BEVY_PLUGIN_GRAPH if it is set; does nothing otherwise.
-    app.add_plugins(PluginGraphPlugin::new("Main"));
+    app.init_graph("Main");
     app.add_owned(GamePlugin);
 
-    // A sub-app is its own world, so it records and dumps its own graph.
+    // A sub-app is its own world, so it records its own graph under its own root.
     let mut render = SubApp::new();
-    render.add_plugins(PluginGraphPlugin::new("RenderApp"));
+    render.init_graph("RenderApp");
     render.add_owned(render::RenderPlugin);
     app.insert_sub_app(RenderApp, render);
 
-    // `finish()` is where PluginGraphPlugin writes, for the main app and every
-    // sub-app. Calling it here rather than `run()` means the runner never starts.
-    app.finish();
-
-    let main_graph = bevy_plugin_graph::graph(&app).unwrap();
+    // `build()` ran synchronously inside each add, so both graphs are already
+    // complete — no `finish()`, no runner. To write files instead of printing:
+    // `app.dump_graph("graph.mmd")` lands in `graph.Main.mmd`.
+    let main_graph = app.graph().unwrap();
     println!("{}", main_graph.to_mermaid());
     println!("{}", main_graph.to_json());
 
-    let render_graph = bevy_plugin_graph::graph_in(app.sub_app(RenderApp).world()).unwrap();
+    let render_graph = app.sub_app(RenderApp).graph().unwrap();
     println!("{}", render_graph.to_mermaid());
 }
 

@@ -61,6 +61,18 @@ node, delegates to `add_plugins`, and pops. `build()` runs synchronously in betw
 captured without traits, macros, or `unsafe`. Plugins added with plain `add_plugins` are simply
 absent from the graph.
 
+Recording is opt-in, not ambient: `init_graph(root)` creates the graph and names its root, and
+`add_owned` records only into a graph that already exists — on an uninitialized world it degrades
+to plain `add_plugins`. Nothing is inserted implicitly, so a world that never opted in carries no
+resource and no recording cost, and the one place a graph can come from is visible in the caller's
+`main`.
+
+The whole surface is one extension trait, `PluginGraphExt` (`add_owned`, `init_graph`, `graph`,
+`dump_graph`), implemented for `App` and `SubApp` — needed because Bevy provides no shared trait
+over the two, and one trait rather than several because every consumer uses the methods together:
+a single import, no free functions with `_in` variants per receiver type. A bare `World` is served
+by the `PluginGraph` resource being public rather than by a third impl.
+
 Nesting inside a sub-app needs no special handling: `Plugin::build` there receives a temporary `App`
 wrapping the sub-app, so the `App` implementation already writes into the right world.
 
@@ -82,14 +94,18 @@ distort the shape of the wiring tree, which is the thing the module identity is 
 to be compared against. Divergence between the two is a question, not an error — the
 renderer surfaces it and says nothing about it.
 
-Emission is a method on the graph. A plugin wraps it to fire from `Plugin::finish()`, with the
-output path taken from an environment variable. Every world dumps itself: the root name is inserted
-into the configured path's file stem, so `graph.mmd` becomes `graph.Main.mmd` and
-`graph.RenderApp.mmd`, side by side and never overwriting each other.
+Emission is a method on the graph, called from `main`. Because `build()` runs synchronously inside
+each add, the graph is complete the moment the last add in `main` returns — before `run()`, before
+`finish()`, before any schedule. There is deliberately no plugin, no `finish()` hook and no
+environment variable: recording is explicit, and so is dumping. When to trigger it — a CLI flag, an
+env var check, a dedicated binary that dumps and returns instead of calling `run()` — is the
+caller's policy, not the crate's. This also sidesteps the `App::finish()` ordering trap that a
+hook-based dump would have (the main app finishes before its sub-apps, so a dump-and-exit hook
+would kill the process before any sub-app had written).
 
-There is deliberately no "dump and exit" option. `App::finish()` finishes the main app's plugins
-*before* its sub-apps', so exiting from the main app would kill the process before any sub-app had
-a chance to write.
+`dump` inserts the root name into the base path's file stem, so dumping every world against
+`graph.mmd` writes `graph.Main.mmd` and `graph.RenderApp.mmd`, side by side and never overwriting
+each other. Sub-apps are named the same way they are recorded: explicitly, while being built.
 
 ## Scope
 

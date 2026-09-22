@@ -6,16 +6,24 @@
 //! intent, not enforcement.
 //!
 //! Bevy keeps `App`'s plugin registry and build depth private, so there is no public
-//! API that exposes the plugin tree. Recording is therefore explicit: swap
-//! `add_plugins` for [`add_owned`](AddOwned::add_owned) at the call sites you want in
-//! the graph. Plugins added with plain `add_plugins` are simply absent.
+//! API that exposes the plugin tree. Recording is therefore explicit, twice over:
+//! [`init_graph`](PluginGraphExt::init_graph) a world to record at all, then swap
+//! `add_plugins` for [`add_owned`](PluginGraphExt::add_owned) at the call sites you want in
+//! the graph. Plugins added with plain `add_plugins` are simply absent, and on a
+//! world that was never initialized `add_owned` degrades to plain `add_plugins`.
 //!
 //! One graph corresponds to one Bevy `World`. An app and each of its sub-apps record
 //! separately and dump separately, into files named after their own roots.
 //!
+//! Dumping is just as explicit. `build()` runs synchronously inside each add, so the
+//! graph is complete as soon as the last add in `main` returns — reach it with
+//! [`graph`](PluginGraphExt::graph) and write it before (or instead of) `App::run()`.
+//! When to trigger a dump — a CLI flag, an environment variable, a dedicated binary
+//! that never calls `run()` — is the caller's policy, not the crate's.
+//!
 //! ```
 //! use bevy_app::{App, Plugin};
-//! use bevy_plugin_graph::{AddOwned, PluginGraphPlugin};
+//! use bevy_plugin_graph::PluginGraphExt;
 //!
 //! struct CombatPlugin;
 //! impl Plugin for CombatPlugin {
@@ -30,10 +38,10 @@
 //! }
 //!
 //! let mut app = App::new();
-//! app.add_plugins(PluginGraphPlugin::new("Main"));
+//! app.init_graph("Main");
 //! app.add_owned(CombatPlugin);
 //!
-//! println!("{}", bevy_plugin_graph::graph(&app).unwrap().to_mermaid());
+//! println!("{}", app.graph().unwrap().to_mermaid());
 //! ```
 
 mod graph;
@@ -46,57 +54,116 @@ use bevy_app::{App, Plugin, SubApp};
 use bevy_ecs::world::World;
 use std::path::{Path, PathBuf};
 
-/// Environment variable read by [`PluginGraphPlugin`] for the output path.
-pub const ENV_OUTPUT: &str = "BEVY_PLUGIN_GRAPH";
-
-/// Adds a plugin and records who added it.
-pub trait AddOwned {
-    /// Add `plugin`, recording an edge from whatever is currently building.
+/// The crate's API, as an extension trait on [`App`] and [`SubApp`].
+///
+/// One trait rather than two (or free functions) because everything here is used
+/// together, and Bevy provides no shared trait over `App` and `SubApp` to hang it
+/// on. Holding only a bare [`World`]? The graph is an ordinary public resource:
+/// `world.get_resource::<PluginGraph>()`.
+pub trait PluginGraphExt {
+    /// Add `plugin`, recording an edge from whatever is currently building —
+    /// provided [`init_graph`](PluginGraphExt::init_graph) has created a graph in
+    /// this world first. On an uninitialized world this is exactly `add_plugins`
+    /// with a single plugin.
     ///
-    /// Equivalent to `add_plugins` with a single plugin, plus the bookkeeping.
     /// Because `build()` runs synchronously inside this call, nesting is captured
     /// without traits, macros or `unsafe`.
     fn add_owned<P: Plugin>(&mut self, plugin: P) -> &mut Self;
+
+    /// Start recording in this world and name the graph's root.
+    ///
+    /// Recording is opt-in: [`add_owned`](PluginGraphExt::add_owned) only records
+    /// into a graph this call created, so call it **before** the adds you want
+    /// recorded — adds on an uninitialized world behave exactly like `add_plugins`.
+    /// Call it once per world: an app and each of its sub-apps record separately.
+    /// The name labels the root node and selects the output file in
+    /// [`dump_graph`](PluginGraphExt::dump_graph), so it must be distinct from any
+    /// sub-app's.
+    fn init_graph(&mut self, root: impl Into<String>);
+
+    /// The graph recorded in this world, if
+    /// [`init_graph`](PluginGraphExt::init_graph) has been called on it.
+    fn graph(&self) -> Option<&PluginGraph>;
+
+    /// Dump this world's graph to `base`, with the root name inserted into the file
+    /// stem and the format inferred from the extension; see [`PluginGraph::dump`].
+    ///
+    /// Errors if the world has no graph, i.e.
+    /// [`init_graph`](PluginGraphExt::init_graph) was never called on it.
+    fn dump_graph(&self, base: impl AsRef<Path>) -> std::io::Result<()>;
 }
 
-impl AddOwned for App {
+impl PluginGraphExt for App {
     fn add_owned<P: Plugin>(&mut self, plugin: P) -> &mut Self {
         begin::<P>(self.world_mut());
         self.add_plugins(plugin);
         end(self.world_mut());
         self
     }
+
+    fn init_graph(&mut self, root: impl Into<String>) {
+        init_graph_in(self.world_mut(), root);
+    }
+
+    fn graph(&self) -> Option<&PluginGraph> {
+        self.world().get_resource::<PluginGraph>()
+    }
+
+    fn dump_graph(&self, base: impl AsRef<Path>) -> std::io::Result<()> {
+        dump_graph_in(self.graph(), base.as_ref())
+    }
 }
 
-impl AddOwned for SubApp {
+impl PluginGraphExt for SubApp {
     fn add_owned<P: Plugin>(&mut self, plugin: P) -> &mut Self {
         begin::<P>(self.world_mut());
         self.add_plugins(plugin);
         end(self.world_mut());
         self
     }
+
+    fn init_graph(&mut self, root: impl Into<String>) {
+        init_graph_in(self.world_mut(), root);
+    }
+
+    fn graph(&self) -> Option<&PluginGraph> {
+        self.world().get_resource::<PluginGraph>()
+    }
+
+    fn dump_graph(&self, base: impl AsRef<Path>) -> std::io::Result<()> {
+        dump_graph_in(self.graph(), base.as_ref())
+    }
 }
 
-fn begin<P: Plugin>(world: &mut World) {
+fn init_graph_in(world: &mut World, root: impl Into<String>) {
     world
         .get_resource_or_insert_with(PluginGraph::new)
-        .begin_owned::<P>();
+        .set_root_name(root);
+}
+
+fn dump_graph_in(graph: Option<&PluginGraph>, base: &Path) -> std::io::Result<()> {
+    let Some(graph) = graph else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no plugin graph in this world: init_graph was never called",
+        ));
+    };
+    graph.dump(base)
+}
+
+// Recording is deliberately not `get_resource_or_insert_with`: only `init_graph`
+// creates the graph, so an uninitialized world stays free of it and `add_owned`
+// degrades to plain `add_plugins`.
+fn begin<P: Plugin>(world: &mut World) {
+    if let Some(mut graph) = world.get_resource_mut::<PluginGraph>() {
+        graph.begin_owned::<P>();
+    }
 }
 
 fn end(world: &mut World) {
     if let Some(mut graph) = world.get_resource_mut::<PluginGraph>() {
         graph.end_owned();
     }
-}
-
-/// The graph recorded in an app's main world, if anything has been recorded yet.
-pub fn graph(app: &App) -> Option<&PluginGraph> {
-    graph_in(app.world())
-}
-
-/// The graph recorded in a specific world — use this to reach a sub-app's graph.
-pub fn graph_in(world: &World) -> Option<&PluginGraph> {
-    world.get_resource::<PluginGraph>()
 }
 
 impl PluginGraph {
@@ -120,6 +187,17 @@ impl PluginGraph {
     /// Write the graph to `path` exactly as given, with no name interpolation.
     pub fn write(&self, path: impl AsRef<Path>, format: Format) -> std::io::Result<()> {
         std::fs::write(path, self.render(format))
+    }
+
+    /// Write to `base` with the root name inserted into the file stem and the format
+    /// inferred from the extension: a root named `Main` dumped to `graph.mmd` lands
+    /// in `graph.Main.mmd`.
+    ///
+    /// Dump every world against the same base and the roots land side by side,
+    /// never overwriting each other; see [`output_path`].
+    pub fn dump(&self, base: impl AsRef<Path>) -> std::io::Result<()> {
+        let path = output_path(base.as_ref(), self.root_name());
+        self.write(&path, Format::from_path(&path))
     }
 }
 
@@ -145,78 +223,6 @@ pub fn output_path(base: &Path, root: &str) -> PathBuf {
     };
 
     base.with_file_name(file)
-}
-
-/// Writes one world's graph out once its plugins have finished building.
-///
-/// Add it to an [`App`] or to a [`SubApp`]; each names its own root and writes its own
-/// file. Does nothing unless an output path is set, either with
-/// [`PluginGraphPlugin::to`] or via the [`ENV_OUTPUT`] environment variable.
-#[derive(Debug, Clone)]
-pub struct PluginGraphPlugin {
-    root: String,
-    output: Option<PathBuf>,
-    format: Option<Format>,
-}
-
-impl PluginGraphPlugin {
-    /// Name this world's root. The name labels the root node and selects the output
-    /// file, so it must be distinct from any sub-app's.
-    pub fn new(root: impl Into<String>) -> Self {
-        Self {
-            root: root.into(),
-            output: None,
-            format: None,
-        }
-    }
-
-    /// Write relative to `path`, ignoring [`ENV_OUTPUT`]. The root name is still
-    /// inserted into the file stem; see [`output_path`].
-    pub fn to(mut self, path: impl Into<PathBuf>) -> Self {
-        self.output = Some(path.into());
-        self
-    }
-
-    /// Force a format instead of inferring one from the path's extension.
-    pub fn format(mut self, format: Format) -> Self {
-        self.format = Some(format);
-        self
-    }
-
-    fn base_path(&self) -> Option<PathBuf> {
-        self.output
-            .clone()
-            .or_else(|| std::env::var_os(ENV_OUTPUT).map(PathBuf::from))
-    }
-}
-
-impl Plugin for PluginGraphPlugin {
-    fn build(&self, app: &mut App) {
-        // Inserted on demand, so this works whether or not any `add_owned` call has
-        // already run.
-        let mut graph = app
-            .world_mut()
-            .get_resource_or_insert_with(PluginGraph::new);
-        graph.set_root_name(self.root.clone());
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(base) = self.base_path() else {
-            return;
-        };
-        let path = output_path(&base, &self.root);
-        let format = self.format.unwrap_or_else(|| Format::from_path(&path));
-
-        let Some(graph) = graph(app) else {
-            return;
-        };
-        if let Err(error) = graph.write(&path, format) {
-            eprintln!(
-                "bevy_plugin_graph: could not write {}: {error}",
-                path.display()
-            );
-        }
-    }
 }
 
 #[cfg(test)]
