@@ -153,39 +153,42 @@ fn json_is_parseable_and_complete() {
 }
 
 #[test]
-fn a_single_module_gets_no_legend_or_colours() {
+fn a_single_module_gets_no_colours_or_notes() {
     // Every plugin in `built_app` lives in the same module, so there is nothing to
     // contrast and the overlay stays out of the way.
     let mermaid = graph_of(&built_app()).to_mermaid();
 
     assert!(!mermaid.contains("classDef"));
-    assert!(!mermaid.contains("subgraph legend"));
+    assert!(!mermaid.contains("<small>"));
 }
 
 #[test]
-fn two_modules_get_a_legend_and_one_class_each() {
+fn two_modules_get_module_notes_and_one_class_each() {
     let mut app = App::new();
     app.add_owned(GamePlugin);
     app.add_owned(deeper::NestedPlugin);
     let graph = graph_of(&app);
     let mermaid = graph.to_mermaid();
 
-    assert!(mermaid.contains("subgraph legend[\"modules\"]"));
-    assert!(mermaid.contains(r#"l0["graph"]"#));
-    assert!(mermaid.contains(r#"l1["graph::deeper"]"#));
+    // Identity rides inside the node, not in a legend.
+    assert!(!mermaid.contains("subgraph"));
+    assert!(mermaid.contains(r#"["CombatPlugin<br/><small>graph</small>"]"#));
+    assert!(mermaid.contains(r#"["NestedPlugin<br/><small>graph::deeper</small>"]"#));
+    // The synthetic root has no module and stays a plain label.
+    assert!(mermaid.contains(r#"n0["App"]"#));
 
     // Biggest module takes the first slot, so its stroke is palette slot 1.
     assert!(mermaid.contains("classDef m0 stroke:#3987e5,stroke-width:2px"));
     assert!(mermaid.contains("classDef m1 stroke:#d95926,stroke-width:2px"));
     assert_eq!(mermaid.matches("classDef").count(), 2);
 
-    // Every non-root node is classed exactly once, plus its legend swatch.
+    // Every non-root node is classed exactly once.
     let classed: usize = mermaid
         .lines()
         .filter(|line| line.trim_start().starts_with("class "))
         .map(|line| line.split(',').count())
         .sum();
-    assert_eq!(classed, graph.nodes().len() - 1 + 2);
+    assert_eq!(classed, graph.nodes().len() - 1);
 }
 
 #[test]

@@ -69,7 +69,9 @@ wrapping the sub-app, so the `App` implementation already writes into the right 
 **JSON is the interface**; every other format is a consumer of it. v1 also ships a Mermaid renderer,
 because it displays in an editor and on GitHub with no toolchain installed.
 
-Mermaid nodes are stroked by module, with a legend naming each one. The palette is
+Mermaid nodes are stroked by module, with the module named in a small note inside
+each node — identity is never carried by colour alone, and an in-node note costs
+no layout space, where a legend subgraph does. The palette is
 validated for colour-vision deficiency and for contrast against both a light and a
 dark surface; strokes rather than fills, because a `classDef` is static and cannot
 carry a theme swap. Modules past the eighth fold into one neutral bucket rather than

@@ -11,8 +11,8 @@ use std::path::Path;
 /// Validated against both a light (`#fcfcfb`) and a dark (`#1a1a19`) surface: every
 /// slot clears the lightness band, chroma floor, colour-vision-deficiency separation
 /// (worst adjacent pair ΔE 8.4) and normal-vision separation (worst ΔE 19.3) in both.
-/// Slot 4 sits marginally under 3:1 contrast on the light surface, which is why the
-/// legend ships visible module labels rather than relying on colour alone.
+/// Slot 4 sits marginally under 3:1 contrast on the light surface, which is why every
+/// node carries its module name as a visible label rather than relying on colour alone.
 ///
 /// Order is the safety mechanism, not decoration — do not shuffle or extend it.
 const PALETTE: [&str; 8] = [
@@ -104,8 +104,29 @@ pub(crate) fn to_json(graph: &PluginGraph) -> String {
 pub(crate) fn to_mermaid(graph: &PluginGraph) -> String {
     let mut out = String::from("flowchart TD\n");
 
+    let modules = rank_modules(graph);
+    // With a single module there is nothing to contrast, so the overlay (colour and
+    // per-node module note alike) stays out of the way.
+    let annotate = modules.len() >= 2;
+
     for node in graph.nodes() {
-        let _ = writeln!(out, "    n{}[\"{}\"]", node.id.0, escape(&node.name));
+        match node.module.as_deref().filter(|_| annotate) {
+            // The module rides inside the node instead of a legend: identity is
+            // never carried by colour alone, and a legend costs layout space.
+            // `<br/>` and `<small>` survive Mermaid's strict-mode sanitizer.
+            Some(module) => {
+                let _ = writeln!(
+                    out,
+                    "    n{}[\"{}<br/><small>{}</small>\"]",
+                    node.id.0,
+                    escape(&node.name),
+                    escape(module)
+                );
+            }
+            None => {
+                let _ = writeln!(out, "    n{}[\"{}\"]", node.id.0, escape(&node.name));
+            }
+        }
     }
 
     if graph.edges().next().is_some() {
@@ -115,8 +136,7 @@ pub(crate) fn to_mermaid(graph: &PluginGraph) -> String {
         }
     }
 
-    let modules = rank_modules(graph);
-    if modules.len() >= 2 {
+    if annotate {
         write_module_colours(&mut out, graph, &modules);
     }
 
@@ -140,7 +160,8 @@ fn rank_modules(graph: &PluginGraph) -> Vec<&str> {
     ranked.into_iter().map(|(module, _)| module).collect()
 }
 
-/// Colour node *strokes* by module, and emit a legend naming each one.
+/// Colour node *strokes* by module. Identity itself is carried by the module note
+/// inside each node, so no legend is emitted.
 ///
 /// Strokes rather than fills: a `classDef` is static, so it cannot carry a
 /// light/dark swap, and leaving fill and text to Mermaid keeps the diagram legible
@@ -150,39 +171,7 @@ fn rank_modules(graph: &PluginGraph) -> Vec<&str> {
 /// the shape of the wiring tree — which is the very thing the colour is meant to be
 /// compared against.
 fn write_module_colours(out: &mut String, graph: &PluginGraph, modules: &[&str]) {
-    let class_of = |slot: usize| {
-        if slot < PALETTE.len() {
-            format!("m{slot}")
-        } else {
-            "mOther".to_string()
-        }
-    };
-
-    // Legend first: identity is never carried by colour alone.
-    out.push_str("\n    subgraph legend[\"modules\"]\n        direction LR\n");
-    for (slot, module) in modules.iter().enumerate().take(PALETTE.len()) {
-        let _ = writeln!(out, "        l{slot}[\"{}\"]", escape(module));
-    }
-    if modules.len() > PALETTE.len() {
-        let _ = writeln!(
-            out,
-            "        lOther[\"other ({})\"]",
-            modules.len() - PALETTE.len()
-        );
-    }
-    // `direction LR` alone is ignored when a subgraph has no internal edges, so the
-    // swatches are chained with invisible links to lay the legend out as a row.
-    let swatches: Vec<String> = (0..modules.len().min(PALETTE.len()))
-        .map(|slot| format!("l{slot}"))
-        .chain((modules.len() > PALETTE.len()).then(|| "lOther".to_string()))
-        .collect();
-    if swatches.len() > 1 {
-        let _ = writeln!(out, "        {}", swatches.join(" ~~~ "));
-    }
-
-    // Mermaid fills subgraphs yellow by default, which reads as meaning something.
-    out.push_str("    end\n    style legend fill:none,stroke:#8a8a85,stroke-width:1px\n\n");
-
+    out.push('\n');
     for (slot, colour) in PALETTE.iter().enumerate().take(modules.len()) {
         let _ = writeln!(out, "    classDef m{slot} stroke:{colour},stroke-width:2px");
     }
@@ -192,19 +181,17 @@ fn write_module_colours(out: &mut String, graph: &PluginGraph, modules: &[&str])
 
     // One `class` line per module keeps the output diffable.
     for (slot, module) in modules.iter().enumerate() {
-        let class = class_of(slot);
-        let mut members: Vec<String> = graph
+        let class = if slot < PALETTE.len() {
+            format!("m{slot}")
+        } else {
+            "mOther".to_string()
+        };
+        let members: Vec<String> = graph
             .nodes()
             .iter()
             .filter(|node| node.module.as_deref() == Some(*module))
             .map(|node| format!("n{}", node.id.0))
             .collect();
-
-        if slot < PALETTE.len() {
-            members.push(format!("l{slot}"));
-        } else if slot == PALETTE.len() {
-            members.push("lOther".to_string());
-        }
 
         let _ = writeln!(out, "    class {} {class}", members.join(","));
     }

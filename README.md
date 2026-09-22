@@ -69,22 +69,22 @@ Reach a sub-app's graph with `bevy_plugin_graph::graph_in(app.sub_app(Label).wor
 
 ## Output
 
-Nodes are stroked by the module they are defined in. Here `WeaponPlugin` is defined
-in `game::ui` but wired in by `CombatPlugin`, so it is the one node whose colour
-differs from its neighbours:
+Nodes are stroked by the module they are defined in, and each node carries its
+module as a small note. Here `WeaponPlugin` is defined in `game::ui` but wired in
+by `CombatPlugin`, so it is the one node whose colour differs from its neighbours:
 
 ```mermaid
 flowchart TD
     n0["Main"]
-    n1["GamePlugin"]
-    n2["CorePlugin"]
-    n3["SavePlugin"]
-    n4["SettingsPlugin"]
-    n5["CombatPlugin"]
-    n6["DamagePlugin"]
-    n7["WeaponPlugin"]
-    n8["UiPlugin"]
-    n9["HudPlugin"]
+    n1["GamePlugin<br/><small>game</small>"]
+    n2["CorePlugin<br/><small>game::core</small>"]
+    n3["SavePlugin<br/><small>game::core</small>"]
+    n4["SettingsPlugin<br/><small>game::core</small>"]
+    n5["CombatPlugin<br/><small>game::combat</small>"]
+    n6["DamagePlugin<br/><small>game::combat</small>"]
+    n7["WeaponPlugin<br/><small>game::ui</small>"]
+    n8["UiPlugin<br/><small>game::ui</small>"]
+    n9["HudPlugin<br/><small>game::ui</small>"]
     n0 --> n1
     n1 --> n2
     n2 --> n3
@@ -94,23 +94,14 @@ flowchart TD
     n5 --> n7
     n1 --> n8
     n8 --> n9
-    subgraph legend["modules"]
-        direction LR
-        l0["game::core"]
-        l1["game::ui"]
-        l2["game::combat"]
-        l3["game"]
-        l0 ~~~ l1 ~~~ l2 ~~~ l3
-    end
-    style legend fill:none,stroke:#8a8a85,stroke-width:1px
     classDef m0 stroke:#3987e5,stroke-width:2px
     classDef m1 stroke:#d95926,stroke-width:2px
     classDef m2 stroke:#199e70,stroke-width:2px
     classDef m3 stroke:#c98500,stroke-width:2px
-    class n2,n3,n4,l0 m0
-    class n7,n8,n9,l1 m1
-    class n5,n6,l2 m2
-    class n1,l3 m3
+    class n2,n3,n4 m0
+    class n7,n8,n9 m1
+    class n5,n6 m2
+    class n1 m3
 ```
 
 That divergence is a question, not an error. Plugins and modules are orthogonal —
