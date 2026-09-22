@@ -44,10 +44,10 @@ if std::env::var_os("DUMP_GRAPH").is_some() {
 app.run();
 ```
 
-`dump_graph` infers the format from the extension (`.mmd`/`.md` → Mermaid, anything
-else → JSON) and inserts the root name into the file stem: `graph.mmd` becomes
-`graph.Main.mmd`. For an exact path and explicit format, reach the graph itself:
-`app.graph().unwrap().write("out.json", Format::Json)`.
+For more control, reach the graph itself:
+```rust
+app.graph().unwrap().write("out.json", Format::Json)
+```
 
 ## Sub-apps
 
@@ -114,8 +114,7 @@ cargo test
 cargo run --example game
 ```
 
-`DESIGN.md` has the reasoning: why instrumentation rather than tracing or static
-analysis, and what is deliberately out of scope.
+Refer to `DESIGN.md` for design reasoning.
 
 ## License
 

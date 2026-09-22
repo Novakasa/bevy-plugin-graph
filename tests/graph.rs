@@ -269,25 +269,23 @@ fn sub_apps_record_a_separate_graph() {
 }
 
 #[test]
-fn dump_writes_each_root_to_its_own_file() {
+fn dump_writes_exactly_where_told() {
     let dir = std::env::temp_dir().join("bevy_plugin_graph_roots");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let base = dir.join("graph.json");
 
     let app = app_with_sub_app();
-    app.dump_graph(&base).unwrap();
-    app.sub_app(Render).dump_graph(&base).unwrap();
+    app.dump_graph(dir.join("main.json")).unwrap();
+    app.sub_app(Render).dump_graph(dir.join("render.json")).unwrap();
 
     // A world without a graph refuses to dump instead of writing nothing.
-    assert!(App::new().dump_graph(&base).is_err());
+    assert!(App::new().dump_graph(dir.join("none.json")).is_err());
+    assert!(!dir.join("none.json").exists());
 
     let main: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("graph.Main.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&std::fs::read_to_string(dir.join("main.json")).unwrap()).unwrap();
     let render: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("graph.Render.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&std::fs::read_to_string(dir.join("render.json")).unwrap()).unwrap();
 
     assert_eq!(main["nodes"][0]["name"], "Main");
     assert_eq!(render["nodes"][0]["name"], "Render");

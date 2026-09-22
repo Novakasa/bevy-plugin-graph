@@ -103,9 +103,10 @@ caller's policy, not the crate's. This also sidesteps the `App::finish()` orderi
 hook-based dump would have (the main app finishes before its sub-apps, so a dump-and-exit hook
 would kill the process before any sub-app had written).
 
-`dump` inserts the root name into the base path's file stem, so dumping every world against
-`graph.mmd` writes `graph.Main.mmd` and `graph.RenderApp.mmd`, side by side and never overwriting
-each other. Sub-apps are named the same way they are recorded: explicitly, while being built.
+`dump` writes exactly the path it is given, inferring only the format from the extension — no name
+interpolation: in a multi-world app, each world is dumped by an explicit call, so each call names
+its own file. The root name labels the root node and nothing else; sub-apps are named the same way
+they are recorded: explicitly, while being built.
 
 ## Scope
 

@@ -91,8 +91,8 @@ impl PluginGraph {
         &self.nodes[ROOT.0].name
     }
 
-    /// Name the synthetic root. Each app and sub-app names its own, because each
-    /// dumps to its own file.
+    /// Name the synthetic root. Each app and sub-app names its own, so the
+    /// rendered graphs can be told apart.
     pub fn set_root_name(&mut self, name: impl Into<String>) {
         let name = name.into();
         self.nodes[ROOT.0].path = name.clone();

@@ -13,7 +13,7 @@
 //! world that was never initialized `add_owned` degrades to plain `add_plugins`.
 //!
 //! One graph corresponds to one Bevy `World`. An app and each of its sub-apps record
-//! separately and dump separately, into files named after their own roots.
+//! separately and dump separately, each to a path of your choosing.
 //!
 //! Dumping is just as explicit. `build()` runs synchronously inside each add, so the
 //! graph is complete as soon as the last add in `main` returns — reach it with
@@ -52,7 +52,7 @@ pub use render::Format;
 
 use bevy_app::{App, Plugin, SubApp};
 use bevy_ecs::world::World;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The crate's API, as an extension trait on [`App`] and [`SubApp`].
 ///
@@ -75,22 +75,21 @@ pub trait PluginGraphExt {
     /// Recording is opt-in: [`add_owned`](PluginGraphExt::add_owned) only records
     /// into a graph this call created, so call it **before** the adds you want
     /// recorded — adds on an uninitialized world behave exactly like `add_plugins`.
-    /// Call it once per world: an app and each of its sub-apps record separately.
-    /// The name labels the root node and selects the output file in
-    /// [`dump_graph`](PluginGraphExt::dump_graph), so it must be distinct from any
-    /// sub-app's.
+    /// Call it once per world: an app and each of its sub-apps record separately,
+    /// and the name labels that world's root node.
     fn init_graph(&mut self, root: impl Into<String>);
 
     /// The graph recorded in this world, if
     /// [`init_graph`](PluginGraphExt::init_graph) has been called on it.
     fn graph(&self) -> Option<&PluginGraph>;
 
-    /// Dump this world's graph to `base`, with the root name inserted into the file
-    /// stem and the format inferred from the extension; see [`PluginGraph::dump`].
+    /// Write this world's graph to `path` exactly as given, with the format
+    /// inferred from the extension; see [`PluginGraph::dump`]. In a multi-world
+    /// app, give each world its own path.
     ///
     /// Errors if the world has no graph, i.e.
     /// [`init_graph`](PluginGraphExt::init_graph) was never called on it.
-    fn dump_graph(&self, base: impl AsRef<Path>) -> std::io::Result<()>;
+    fn dump_graph(&self, path: impl AsRef<Path>) -> std::io::Result<()>;
 }
 
 impl PluginGraphExt for App {
@@ -109,8 +108,8 @@ impl PluginGraphExt for App {
         self.world().get_resource::<PluginGraph>()
     }
 
-    fn dump_graph(&self, base: impl AsRef<Path>) -> std::io::Result<()> {
-        dump_graph_in(self.graph(), base.as_ref())
+    fn dump_graph(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        dump_graph_in(self.graph(), path.as_ref())
     }
 }
 
@@ -130,8 +129,8 @@ impl PluginGraphExt for SubApp {
         self.world().get_resource::<PluginGraph>()
     }
 
-    fn dump_graph(&self, base: impl AsRef<Path>) -> std::io::Result<()> {
-        dump_graph_in(self.graph(), base.as_ref())
+    fn dump_graph(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        dump_graph_in(self.graph(), path.as_ref())
     }
 }
 
@@ -141,14 +140,14 @@ fn init_graph_in(world: &mut World, root: impl Into<String>) {
         .set_root_name(root);
 }
 
-fn dump_graph_in(graph: Option<&PluginGraph>, base: &Path) -> std::io::Result<()> {
+fn dump_graph_in(graph: Option<&PluginGraph>, path: &Path) -> std::io::Result<()> {
     let Some(graph) = graph else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "no plugin graph in this world: init_graph was never called",
         ));
     };
-    graph.dump(base)
+    graph.dump(path)
 }
 
 // Recording is deliberately not `get_resource_or_insert_with`: only `init_graph`
@@ -184,68 +183,15 @@ impl PluginGraph {
         }
     }
 
-    /// Write the graph to `path` exactly as given, with no name interpolation.
+    /// Write the graph to `path` in the given format.
     pub fn write(&self, path: impl AsRef<Path>, format: Format) -> std::io::Result<()> {
         std::fs::write(path, self.render(format))
     }
 
-    /// Write to `base` with the root name inserted into the file stem and the format
-    /// inferred from the extension: a root named `Main` dumped to `graph.mmd` lands
-    /// in `graph.Main.mmd`.
-    ///
-    /// Dump every world against the same base and the roots land side by side,
-    /// never overwriting each other; see [`output_path`].
-    pub fn dump(&self, base: impl AsRef<Path>) -> std::io::Result<()> {
-        let path = output_path(base.as_ref(), self.root_name());
-        self.write(&path, Format::from_path(&path))
-    }
-}
-
-/// Insert the root name into a base path's file stem: `graph.mmd` for root `RenderApp`
-/// becomes `graph.RenderApp.mmd`.
-///
-/// Every root in an app lands in one directory, side by side, with the extension left
-/// alone so format inference still works.
-pub fn output_path(base: &Path, root: &str) -> PathBuf {
-    let sanitized: String = root
-        .chars()
-        .map(|ch| if ch.is_alphanumeric() { ch } else { '_' })
-        .collect();
-
-    let stem = base
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("graph");
-
-    let file = match base.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) => format!("{stem}.{sanitized}.{ext}"),
-        None => format!("{stem}.{sanitized}"),
-    };
-
-    base.with_file_name(file)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn interpolates_the_root_into_the_stem() {
-        assert_eq!(
-            output_path(Path::new("out/graph.mmd"), "RenderApp"),
-            PathBuf::from("out/graph.RenderApp.mmd")
-        );
-        assert_eq!(
-            output_path(Path::new("graph"), "Main"),
-            PathBuf::from("graph.Main")
-        );
-    }
-
-    #[test]
-    fn sanitizes_root_names_for_the_filesystem() {
-        assert_eq!(
-            output_path(Path::new("g.json"), "Render App/2"),
-            PathBuf::from("g.Render_App_2.json")
-        );
+    /// [`write`](PluginGraph::write) with the format inferred from the path's
+    /// extension: `.mmd`, `.mermaid` and `.md` render Mermaid, anything else JSON.
+    pub fn dump(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        let path = path.as_ref();
+        self.write(path, Format::from_path(path))
     }
 }

@@ -36,7 +36,7 @@ fn main() {
 
     // `build()` ran synchronously inside each add, so both graphs are already
     // complete — no `finish()`, no runner. To write files instead of printing:
-    // `app.dump_graph("graph.mmd")` lands in `graph.Main.mmd`.
+    // `app.dump_graph("main.mmd")` — one explicit path per world.
     let main_graph = app.graph().unwrap();
     println!("{}", main_graph.to_mermaid());
     println!("{}", main_graph.to_json());
