@@ -34,7 +34,7 @@ impl Plugin for GamePlugin {
 }
 ```
 
-Then dump the graph like so:
+It is easily possible to make your binary just dump the graphs without running the game like so:
 
 ```rust
 if std::env::var_os("DUMP_GRAPH").is_some() {
@@ -62,10 +62,6 @@ app.insert_sub_app(RenderApp, render);
 ```
 
 ## Output
-
-Nodes are stroked by the module they are defined in, and each node carries its
-module as a small note. Here `WeaponPlugin` is defined in `game::ui` but wired in
-by `CombatPlugin`, so it is the one node whose colour differs from its neighbours:
 
 ```mermaid
 flowchart TD
