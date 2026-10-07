@@ -36,15 +36,20 @@ pub enum Format {
     /// The canonical representation.
     #[default]
     Json,
-    /// A `flowchart TD`, renderable by GitHub and most editors with no toolchain.
+    /// A bare `flowchart TD`, for tools that take Mermaid source directly.
     Mermaid,
+    /// The Mermaid diagram inside a fenced ```` ```mermaid ```` block, so that the
+    /// file renders as a diagram wherever Markdown previews do: GitHub, Zed,
+    /// VS Code, Obsidian.
+    Markdown,
 }
 
 impl Format {
     /// Guess from a file extension, defaulting to [`Format::Json`].
     pub fn from_path(path: &Path) -> Self {
         match path.extension().and_then(|ext| ext.to_str()) {
-            Some("mmd" | "mermaid" | "md") => Format::Mermaid,
+            Some("mmd" | "mermaid") => Format::Mermaid,
+            Some("md" | "markdown") => Format::Markdown,
             _ => Format::Json,
         }
     }
@@ -143,6 +148,13 @@ pub(crate) fn to_mermaid(graph: &PluginGraph) -> String {
     out
 }
 
+/// Markdown is a thin wrapper: the Mermaid source in a fenced block, nothing else.
+/// No heading, because the root node already names the app, and a one-block file
+/// stays easy to embed into a larger document.
+pub(crate) fn to_markdown(graph: &PluginGraph) -> String {
+    format!("```mermaid\n{}```\n", to_mermaid(graph))
+}
+
 /// Modules in the order they take colour slots: biggest group first, ties broken by
 /// name so that the same app always renders the same colours.
 fn rank_modules(graph: &PluginGraph) -> Vec<&str> {
@@ -220,6 +232,25 @@ mod tests {
     fn root_only_mermaid_has_no_edge_block() {
         let rendered = to_mermaid(&PluginGraph::new());
         assert_eq!(rendered, "flowchart TD\n    n0[\"App\"]\n");
+    }
+
+    #[test]
+    fn markdown_fences_the_mermaid_source() {
+        let graph = PluginGraph::new();
+        assert_eq!(
+            to_markdown(&graph),
+            format!("```mermaid\n{}```\n", to_mermaid(&graph))
+        );
+    }
+
+    #[test]
+    fn format_from_extension() {
+        assert_eq!(Format::from_path(Path::new("g.json")), Format::Json);
+        assert_eq!(Format::from_path(Path::new("g.mmd")), Format::Mermaid);
+        assert_eq!(Format::from_path(Path::new("g.mermaid")), Format::Mermaid);
+        assert_eq!(Format::from_path(Path::new("g.md")), Format::Markdown);
+        assert_eq!(Format::from_path(Path::new("g.markdown")), Format::Markdown);
+        assert_eq!(Format::from_path(Path::new("g")), Format::Json);
     }
 
     #[test]

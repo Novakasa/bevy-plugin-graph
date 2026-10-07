@@ -176,10 +176,17 @@ impl PluginGraph {
         render::to_mermaid(self)
     }
 
+    /// Render as Markdown: the Mermaid diagram in a fenced ```` ```mermaid ````
+    /// block, which previews as a diagram in GitHub, Zed, VS Code and the like.
+    pub fn to_markdown(&self) -> String {
+        render::to_markdown(self)
+    }
+
     pub fn render(&self, format: Format) -> String {
         match format {
             Format::Json => self.to_json(),
             Format::Mermaid => self.to_mermaid(),
+            Format::Markdown => self.to_markdown(),
         }
     }
 
@@ -189,7 +196,8 @@ impl PluginGraph {
     }
 
     /// [`write`](PluginGraph::write) with the format inferred from the path's
-    /// extension: `.mmd`, `.mermaid` and `.md` render Mermaid, anything else JSON.
+    /// extension: `.mmd` and `.mermaid` render bare Mermaid, `.md` and `.markdown`
+    /// render Markdown with the diagram fenced, anything else JSON.
     pub fn dump(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let path = path.as_ref();
         self.write(path, Format::from_path(path))

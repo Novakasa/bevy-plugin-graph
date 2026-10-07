@@ -142,6 +142,17 @@ fn mermaid_renders_every_node_and_edge() {
 }
 
 #[test]
+fn markdown_wraps_mermaid_in_a_fence() {
+    let app = built_app();
+    let graph = graph_of(&app);
+    let markdown = graph.to_markdown();
+
+    assert!(markdown.starts_with("```mermaid\nflowchart TD\n"));
+    assert!(markdown.ends_with("\n```\n"));
+    assert_eq!(markdown, format!("```mermaid\n{}```\n", graph.to_mermaid()));
+}
+
+#[test]
 fn json_is_parseable_and_complete() {
     let app = built_app();
     let graph = graph_of(&app);
@@ -276,7 +287,16 @@ fn dump_writes_exactly_where_told() {
 
     let app = app_with_sub_app();
     app.dump_graph(dir.join("main.json")).unwrap();
-    app.sub_app(Render).dump_graph(dir.join("render.json")).unwrap();
+    app.sub_app(Render)
+        .dump_graph(dir.join("render.json"))
+        .unwrap();
+
+    // The extension picks the format: `.md` is the fenced Markdown wrapper.
+    app.dump_graph(dir.join("main.md")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("main.md")).unwrap(),
+        app.graph().unwrap().to_markdown()
+    );
 
     // A world without a graph refuses to dump instead of writing nothing.
     assert!(App::new().dump_graph(dir.join("none.json")).is_err());

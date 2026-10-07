@@ -79,7 +79,12 @@ wrapping the sub-app, so the `App` implementation already writes into the right 
 ## Output
 
 **JSON is the interface**; every other format is a consumer of it. v1 also ships a Mermaid renderer,
-because it displays in an editor and on GitHub with no toolchain installed.
+because it displays in an editor and on GitHub with no toolchain installed, and a Markdown
+renderer that is nothing more than the Mermaid source in a fenced block. Editors such as
+Zed preview a `.md` file natively but have nothing for a bare `.mmd`, so the wrapper is
+what makes "dump and open" work without a plugin. It carries no heading or prose: the
+root node already names the app, and a one-block file is trivial to paste into a larger
+document.
 
 Mermaid nodes are stroked by module, with the module named in a small note inside
 each node — identity is never carried by colour alone, and an in-node note costs
@@ -113,7 +118,7 @@ they are recorded: explicitly, while being built.
 Bevy 0.19, tracking the latest Bevy release. Built as a personal tool first; publishing is a
 question for after it proves useful.
 
-**In v1:** the containment graph for an app and each of its sub-apps, JSON and Mermaid output.
+**In v1:** the containment graph for an app and each of its sub-apps, JSON, Mermaid and Markdown output.
 
 **Not in v1:** shared/multi-parent plugins, any form of linting or violation reporting, foreign and
 un-instrumented plugins, DOT output, an in-app UI.

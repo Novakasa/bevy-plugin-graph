@@ -1,6 +1,7 @@
 # bevy_plugin_graph
 
-Records which Bevy plugin added which plugin, and renders the result as JSON or Mermaid.
+Records which Bevy plugin added which plugin, and renders the result as JSON, Mermaid,
+or Markdown.
 
 The whole API is one extension trait on `App` and `SubApp`: `PluginGraphExt`, with
 `init_graph`, `add_owned`, `graph`, and `dump_graph`.
@@ -43,6 +44,10 @@ if std::env::var_os("DUMP_GRAPH").is_some() {
 }
 app.run();
 ```
+
+The format follows the extension: `.json`, `.mmd`/`.mermaid`, or `.md`/`.markdown`.
+The Markdown output is the Mermaid diagram in a fenced block, so a `.md` file
+previews as a diagram in editors such as Zed or VS Code, and on GitHub.
 
 For more control, reach the graph itself:
 ```rust
