@@ -115,7 +115,7 @@ they are recorded: explicitly, while being built.
 
 ## Scope
 
-Bevy 0.19, tracking the latest Bevy release. Built as a personal tool first; publishing is a
+Bevy 0.20, tracking the latest Bevy release. Built as a personal tool first; publishing is a
 question for after it proves useful.
 
 **In v1:** the containment graph for an app and each of its sub-apps, JSON, Mermaid and Markdown output.
@@ -134,7 +134,9 @@ Two directions, in rough order of interest:
    plugins, and treating the difference between the observed and the declared tree as a result in
    itself.
 
-Worth knowing about the first: `bevy_ecs` 0.19 keeps per-system data access private
-(`SystemWithAccess::access` is `pub(crate)` with no public getter), so automatically determining
-which plugin *uses* a given type is not possible against the public API. Only declarations can be
-compared against each other.
+Worth knowing about the first: as of `bevy_ecs` 0.20, per-system data access is reachable from
+the public API (`Schedule::systems_with_access` yields `SystemWithAccess`, whose `access()` getter
+exposes the `SystemAccess`; up to 0.19 that field was `pub(crate)` with no getter). What it does not
+give is attribution: access is recorded per system, not per plugin, and nothing ties a system back
+to the plugin whose `build()` registered it. So comparing declared against observed usage would
+still need this crate to record which plugin was building when each system was added.

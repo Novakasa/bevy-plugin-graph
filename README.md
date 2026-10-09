@@ -103,7 +103,7 @@ flowchart TD
 
 | `bevy_plugin_graph` | `bevy` |
 |---|---|
-| 0.1 | 0.19 |
+| 0.1 | 0.20 |
 
 ## Development
 
